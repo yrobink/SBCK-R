@@ -82,57 +82,182 @@
 ##################################################################################
 ##################################################################################
 
-
-
-#' data_to_hist
+#' Shift
 #'
-#' Just a function to transform two datasets into SparseHist, if X or Y (or the both) are already a SparseHist,
-#' update just the second
+#' Class to transform a dataset such that autocorrelations are intervariables correlations
 #'
-#' @param X [matrix or SparseHist]
-#' @param Y [matrix or SparseHist]
-#'        
-#' @return [list(muX,muY)] a list with the two SparseHist
+#' @docType class
+#' @importFrom R6 R6Class
 #'
+#' @param lag [integer]
+#'        max lag for autocorrelations
+#' @param method [character]
+#'        If "row" inverse by row, else by column
+#' @param ref [integer]
+#'        starting point for inverse transform
+#'
+#' @return Object of \code{\link{R6Class}}
+#' @format \code{\link{R6Class}} object.
+#'
+#' @section Methods:
+#' \describe{
+#'   \item{\code{new(lag,method,ref,)}}{This method is used to create object of this class with \code{Shift}}
+#'   \item{\code{transform(X)}}{Method to shift a dataset}
+#'   \item{\code{inverse(Xs)}}{Method to inverse the shift of a dataset}
+#' }
 #' @examples
-#' X = base::cbind( stats::rnorm(2000) , stats::rexp(2000)  )
-#' Y = base::cbind( stats::rexp(2000)  , stats::rnorm(2000) )
+#' X = base::t(matrix( 1:20 , nrow = 2 , ncol = 10 ))
 #' 
-#' bw = base::c(0.1,0.1)
-#' muX = SBCK::SparseHist( X , bw )
-#' muY = SBCK::SparseHist( Y , bw )
-#' 
-#' ## The four give the same result
-#' SBCK::data_to_hist( X   , Y )
-#' SBCK::data_to_hist( muX , Y )
-#' SBCK::data_to_hist( X   , muY )
-#' SBCK::data_to_hist( muX , muY )
+#' sh = Shift$new(1)
+#' Xs = sh$transform(X)
+#' Xi = sh$inverse(Xs)
 #'
 #' @export
-data_to_hist = function( X , Y )
-{
-	is_hist = function(Z) { return( (class(Z) == "Rcpp_SparseHistBase" ) || ("OTHist" %in% class(Z))  ) }
-	X_is_hist = is_hist(X)
-	Y_is_hist = is_hist(Y)
+Shift = R6::R6Class( "Shift" ,
 	
-	if( X_is_hist && Y_is_hist )
+	private = list( ##{{{
+	
+	.method = NULL,
+	.ref    = NULL,
+	
+	inverse_by_row = function(Xs)##{{{
 	{
-		return( list( muX = X , muY = Y ) )
+		n_features = as.integer( dim(Xs)[2] / ( self$lag + 1 ))
+		n_samples  = dim(Xs)[1] + self$lag
+		Xi = matrix( NA , ncol = n_features , nrow = n_samples )
+		for( r in base::c(1:self$lag,self$ref) )
+		{
+			idx = base::seq( r , n_samples - self$lag , self$lag )
+			Xs0 = as.vector(base::t(Xs[idx[-length(idx)],1:(base::ncol(Xs) - n_features)]))
+			Xs1 = as.vector(base::t(Xs[idx[length(idx)],]))
+			Xs01 = base::t(matrix( base::c(Xs0,Xs1) , nrow = n_features ))
+			Xi[r:(r+base::nrow(Xs01)-1),] = Xs01
+		}
+		
+		return(Xi)
+	},
+	##}}}
+	
+	inverse_by_col = function(Xs)##{{{
+	{
+		n_features = as.integer( dim(Xs)[2] / (self$lag + 1) )
+		n_samples  = dim(Xs)[1] + self$lag
+		Xi = matrix( NA , nrow = n_samples , ncol = n_features )
+		
+		ref = self$ref
+		if( ref < 1 )
+			ref = 1
+		if( ref > n_features )
+			ref = n_features
+		
+		for( i in base::c( 0:self$lag , ref ) )
+		{
+			db = i * n_features + 1
+			de = i * n_features + n_features
+			tb = i + 1
+			te = n_samples - ( self$lag + 1 ) + i + 1
+			Xi[tb:te,] = Xs[,db:de]
+		}
+		
+		return(Xi)
 	}
-	if( X_is_hist && !Y_is_hist )
+	##}}}
+	
+	),
+	##}}}
+	
+	active = list( ##{{{
+	
+	method = function(value)##{{{
 	{
-		muY = SBCK::SparseHist( Y , X$bin_width , X$bin_width )
-		return( list( muX = X , muY = muY ) )
-	}
-	if( !X_is_hist && Y_is_hist )
+		if( missing(value) )
+		{
+			return(private$.method)
+		}
+		else
+		{
+			if( value %in% base::c("col","row") )
+				private$.method = value
+			else
+				private$.method = "row"
+		}
+	},
+	##}}}
+	
+	ref = function(value)##{{{
 	{
-		muX = SBCK::SparseHist( X , Y$bin_width , Y$bin_width )
-		return( list( muX = muX , muY = Y ) )
+		if( missing(value) )
+		{
+			return(private$.ref)
+		}
+		else
+		{
+			private$.ref = ( (value - 1) %% ( self$lag + 1 ) ) + 1
+		}
 	}
 	
-	bw = SBCK::bin_width_estimator( list(X,Y) )
-	muX = SBCK::SparseHist( X , bw )
-	muY = SBCK::SparseHist( Y , bw )
+	),
+	##}}}
 	
-	return( list( muX = muX , muY = muY ) )
-}
+	##}}}
+	
+	public = list( ##{{{
+	
+	###############
+	## Arguments ##
+	###############
+	
+	lag    = NULL,
+	
+	#################
+	## Constructor ##
+	#################
+	
+	initialize = function( lag , method = "row" , ref = 1 )##{{{
+	{
+		self$lag    = lag
+		self$ref    = ref
+		self$method = method
+	},
+	##}}}
+	
+	
+	#############
+	## Methods ##
+	#############
+	
+	transform = function( X )##{{{
+	{
+		if( is.vector(X) )
+			X = matrix( X , nrow = length(X) , ncol = 1 )
+		
+		n_samples  = base::dim(X)[1]
+		n_features = base::dim(X)[2]
+		Xs = matrix( NA , nrow = n_samples - self$lag , ncol = ( self$lag + 1 ) * n_features )
+		
+		for( i in 0:self$lag )
+		{
+			db = i * n_features + 1
+			de = i * n_features + n_features
+			tb = i + 1
+			te = n_samples - ( self$lag + 1 ) + i + 1
+			Xs[,db:de] = X[tb:te,]
+		}
+		
+		return(Xs)
+	},
+	##}}}
+	
+	inverse = function( Xs )##{{{
+	{
+		if( self$method == "row" )
+			return(private$inverse_by_row(Xs))
+		else
+			return(private$inverse_by_col(Xs))
+	}
+	##}}}
+	
+	)
+	##}}}
+)
+

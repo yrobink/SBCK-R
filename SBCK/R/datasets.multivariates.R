@@ -1,4 +1,3 @@
-
 ##################################################################################
 ##################################################################################
 ##                                                                              ##
@@ -82,57 +81,156 @@
 ##################################################################################
 ##################################################################################
 
+# dataset_gaussian_exp_2d ##{{{
 
-
-#' data_to_hist
+#' dataset_gaussian_exp_2d
 #'
-#' Just a function to transform two datasets into SparseHist, if X or Y (or the both) are already a SparseHist,
-#' update just the second
+#' Generate a testing dataset such that the biased dataset is a distribution
+#' of the the form Normal x Exp and the reference of the the form Exp x Normal.
 #'
-#' @param X [matrix or SparseHist]
-#' @param Y [matrix or SparseHist]
+#' @param n_samples [integer]
+#'        numbers of samples drawn
 #'        
-#' @return [list(muX,muY)] a list with the two SparseHist
+#' @return [list]
+#'        a list containing X0, X1 (biased in calibration/projection) and Y0 (reference in calibration)
 #'
 #' @examples
-#' X = base::cbind( stats::rnorm(2000) , stats::rexp(2000)  )
-#' Y = base::cbind( stats::rexp(2000)  , stats::rnorm(2000) )
-#' 
-#' bw = base::c(0.1,0.1)
-#' muX = SBCK::SparseHist( X , bw )
-#' muY = SBCK::SparseHist( Y , bw )
-#' 
-#' ## The four give the same result
-#' SBCK::data_to_hist( X   , Y )
-#' SBCK::data_to_hist( muX , Y )
-#' SBCK::data_to_hist( X   , muY )
-#' SBCK::data_to_hist( muX , muY )
+#' XY = SBCK::dataset_gaussian_exp_2d(2000)
+#' XY$X0 ## Biased in calibration period
+#' XY$Y0 ## Reference in calibration period
+#' XY$X1 ## Biased in projection period
 #'
 #' @export
-data_to_hist = function( X , Y )
+dataset_gaussian_exp_2d = function(n_samples)
 {
-	is_hist = function(Z) { return( (class(Z) == "Rcpp_SparseHistBase" ) || ("OTHist" %in% class(Z))  ) }
-	X_is_hist = is_hist(X)
-	Y_is_hist = is_hist(Y)
+	X0 = base::cbind( stats::rnorm(n_samples)             , stats::rexp( n_samples)  )
+	Y0 = base::cbind( stats::rexp( n_samples)             , stats::rnorm(n_samples) )
+	X1 = base::cbind( stats::rnorm(n_samples , mean = 5 ) , stats::rexp( n_samples)  )
 	
-	if( X_is_hist && Y_is_hist )
-	{
-		return( list( muX = X , muY = Y ) )
-	}
-	if( X_is_hist && !Y_is_hist )
-	{
-		muY = SBCK::SparseHist( Y , X$bin_width , X$bin_width )
-		return( list( muX = X , muY = muY ) )
-	}
-	if( !X_is_hist && Y_is_hist )
-	{
-		muX = SBCK::SparseHist( X , Y$bin_width , Y$bin_width )
-		return( list( muX = muX , muY = Y ) )
-	}
-	
-	bw = SBCK::bin_width_estimator( list(X,Y) )
-	muX = SBCK::SparseHist( X , bw )
-	muY = SBCK::SparseHist( Y , bw )
-	
-	return( list( muX = muX , muY = muY ) )
+	return( list( X0 = X0 , X1 = X1 , Y0 = Y0 ) )
 }
+##}}}
+
+# dataset_gaussian_L_2d ##{{{
+
+#' dataset_gaussian_L_2d
+#'
+#' Generate a testing dataset such that the biased dataset is a normal distribution
+#' and reference a mixture a normal with a form in "L"
+#'
+#' @param n_samples [integer]
+#'        numbers of samples drawn
+#'        
+#' @return [list]
+#'        a list containing X0, X1 (biased in calibration/projection) and Y0 (reference in calibration)
+#'
+#' @examples
+#' XY = SBCK::dataset_gaussian_L_2d(2000)
+#' XY$X0 ## Biased in calibration period
+#' XY$Y0 ## Reference in calibration period
+#' XY$X1 ## Biased in projection period
+#'
+#' @export
+dataset_gaussian_L_2d = function( n_samples )
+{
+	## Construction of X0 (biased period 0), X1 (biased period 1) and Y0 (reference period 0)
+	size0  = as.integer(n_samples/2)
+	size1  = n_samples - as.integer(n_samples/4)
+	
+	## Just a gaussian for X0
+	X0 = rmultivariate_normal( n = n_samples , mean = base::c(0.,0.) , cov = base::diag(2) )
+	
+	## A lightly complex gaussian for X1
+	X1 = rmultivariate_normal( n = n_samples , mean = base::c(1.,2.) , cov = matrix( base::c(2.,0,0,0.5) , nrow = 2 , ncol = 2 ) )
+	
+	## A very complex law for Y0
+	Y0 = matrix( NA , nrow = n_samples , ncol = 2 )
+	Y0[1:size0,]         = rmultivariate_normal( n = size0             , mean = base::c(7.,7.)   , cov = matrix( base::c(2,0,0,0.5)   , nrow = 2 , ncol = 2 ) )
+	Y0[size0:size1,]     = rmultivariate_normal( n = size1 - size0 + 1 , mean = base::c(5.,9.)   , cov = matrix( base::c(0.5,0,0,2)   , nrow = 2 , ncol = 2 ) )
+	Y0[size1:n_samples,] = rmultivariate_normal( n = n_samples - size1 + 1 , mean = base::c(5.,12.5) , cov = matrix( base::c(0.2,0,0,0.2) , nrow = 2 , ncol = 2 ) )
+	meanY0 = base::apply( Y0 , 2 , base::mean )
+	meanX0 = base::apply( X0 , 2 , base::mean )
+	diff = meanY0 - meanX0
+	Y0 = base::t(base::apply( Y0 , 1 , function(x) { return(x - diff) } ))
+	
+	return( list( X0 = X0 , X1 = X1 , Y0 = Y0 ) )
+}
+##}}}
+
+# dataset_gaussian_2d ##{{{
+
+#' dataset_gaussian_2d
+#'
+#' Generate a testing dataset from random bivariate Gaussian distribution
+#'
+#' @param n_samples [integer]
+#'        numbers of samples drawn
+#'        
+#' @return [list]
+#'        a list containing X0, X1 (biased in calibration/projection) and Y0 (reference in calibration)
+#'
+#' @examples
+#' XY = SBCK::dataset_gaussian_2d(2000)
+#' XY$X0 ## Biased in calibration period
+#' XY$Y0 ## Reference in calibration period
+#' XY$X1 ## Biased in projection period
+#'
+#' @export
+dataset_gaussian_2d = function(n_samples)
+{
+	CX0 = base::matrix( base::c(2.33,-0.38,-0.38,0.48) , nrow = 2 , ncol = 2 )
+	X0  = rmultivariate_normal( n_samples , mean = base::rep(0,2) , cov = CX0 )
+	CX1 = base::matrix( base::c(0.1,-0.8,-0.8,3.37) , nrow = 2 , ncol = 2 )
+	X1  = rmultivariate_normal( n_samples , mean = base::rep(2,2) , cov = CX1 )
+	CY0 = base::matrix( base::c(0.32,-0.18,-0.18,2.40) , nrow = 2 , ncol = 2 )
+	Y0  = rmultivariate_normal( n_samples , mean = base::rep(3,2) , cov = CY0 )
+	
+	return( list( X0 = X0 , X1 = X1 , Y0 = Y0 ) )
+}
+##}}}
+
+# dataset_bimodal_reverse_2d ##{{{
+
+#' dataset_bimodal_reverse_2d
+#'
+#' Generate a testing dataset from bimodale random bivariate Gaussian distribution
+#'
+#' @param n_samples [integer]
+#'        numbers of samples drawn
+#'        
+#' @return [list]
+#'        a list containing X0, X1 (biased in calibration/projection) and Y0 (reference in calibration)
+#'
+#' @examples
+#' XY = SBCK::dataset_bimodal_reverse_2d(2000)
+#' XY$X0 ## Biased in calibration period
+#' XY$Y0 ## Reference in calibration period
+#' XY$X1 ## Biased in projection period
+#'
+#' @export
+dataset_bimodal_reverse_2d = function(n_samples)
+{
+	draw   = list( u = as.integer(n_samples/2) )
+	draw[["l"]] = n_samples - draw$u
+	lmY0   = list( u = base::c(5,-3)  , l = base::c(-3,3) )
+	lcovY0 = list( u = 0.9 * diag(2)  , l = diag(2)       )
+	lmX0   = list( u = base::c(0,0)   , l = base::c(2,2)  )
+	lcovX0 = list( u = diag(2)        , l = 0.5 * diag(2) )
+	lmX1   = list( u = base::c(-1,-1) , l = base::c(5,5)  )
+	lcovX1 = list( u = 2 * diag(2)    , l = 0.1 * diag(2) )
+	
+	Y0 = NULL
+	X0 = NULL
+	X1 = NULL
+	for( idx in base::c("u","l") )
+	{
+		Y0 = base::rbind( Y0 , rmultivariate_normal( draw[[idx]] , lmY0[[idx]] , lcovY0[[idx]] ) )
+		X0 = base::rbind( X0 , rmultivariate_normal( draw[[idx]] , lmX0[[idx]] , lcovX0[[idx]] ) )
+		X1 = base::rbind( X1 , rmultivariate_normal( draw[[idx]] , lmX1[[idx]] , lcovX1[[idx]] ) )
+	}
+	
+	return( list( X0 = X0 , X1 = X1 , Y0 = Y0 ) )
+}
+
+##}}}
+

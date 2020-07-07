@@ -82,57 +82,127 @@
 ##################################################################################
 ##################################################################################
 
-
-
-#' data_to_hist
+#' R2D2 (Rank Resampling for Distributions and Dependences) method
 #'
-#' Just a function to transform two datasets into SparseHist, if X or Y (or the both) are already a SparseHist,
-#' update just the second
+#' Perform a multivariate (non stationary) bias correction.
 #'
-#' @param X [matrix or SparseHist]
-#' @param Y [matrix or SparseHist]
-#'        
-#' @return [list(muX,muY)] a list with the two SparseHist
+#' @docType class
+#' @importFrom R6 R6Class
 #'
+#' @param irefs [vector of int]
+#'        Indexes for RankShuffle. Defaults is base::c(1)
+#' @param ... 
+#'        Named arguments passed to CDFt
+#' @param Y0  [matrix]
+#'        A matrix containing references during calibration period (time in column, variables in row)
+#' @param X0 [matrix]
+#'        A matrix containing biased data during calibration period (time in column, variables in row)
+#' @param X1 [matrix]
+#'        A matrix containing biased data during projection period (time in column, variables in row)
+#'
+#' @return Object of \code{\link{R6Class}} with methods for bias correction
+#' @format \code{\link{R6Class}} object.
+#'
+#' @section Methods:
+#' \describe{
+#'   \item{\code{new(bin_width,irefs)}}{This method is used to create object of this class with \code{R2D2}}
+#'   \item{\code{fit(Y0,X0,X1)}}{Fit the bias correction model from Y0, X0 and X1}.
+#'   \item{\code{predict(X1)}}{Perform the bias correction of X1 with respect to paramater given in fit.}.
+#' }
+#' @references Vrac, M.: Multivariate bias adjustment of high-dimensional climate simulations: the Rank Resampling for Distributions and Dependences (R2 D2 ) bias correction, Hydrol. Earth Syst. Sci., 22, 3175–3196, https://doi.org/10.5194/hess-22-3175-2018, 2018.
 #' @examples
-#' X = base::cbind( stats::rnorm(2000) , stats::rexp(2000)  )
-#' Y = base::cbind( stats::rexp(2000)  , stats::rnorm(2000) )
-#' 
-#' bw = base::c(0.1,0.1)
-#' muX = SBCK::SparseHist( X , bw )
-#' muY = SBCK::SparseHist( Y , bw )
-#' 
-#' ## The four give the same result
-#' SBCK::data_to_hist( X   , Y )
-#' SBCK::data_to_hist( muX , Y )
-#' SBCK::data_to_hist( X   , muY )
-#' SBCK::data_to_hist( muX , muY )
+#' ## Three bivariate random variables (rnorm and rexp are inverted between ref and bias)
+#' XY = SBCK::dataset_gaussian_exp_2d(2000)
+#' X0 = XY$X0 ## Biased in calibration period
+#' Y0 = XY$Y0 ## Reference in calibration period
+#' X1 = XY$X1 ## Biased in projection period
+#'
+#' ## Bias correction
+#' ## Step 1 : construction of the class R2D2 
+#' r2d2 = SBCK::R2D2$new() 
+#' ## Step 2 : Fit the bias correction model
+#' r2d2$fit( Y0 , X0 , X1 )
+#' ## Step 3 : perform the bias correction
+#' Z = r2d2$predict(X1,X0) 
 #'
 #' @export
-data_to_hist = function( X , Y )
-{
-	is_hist = function(Z) { return( (class(Z) == "Rcpp_SparseHistBase" ) || ("OTHist" %in% class(Z))  ) }
-	X_is_hist = is_hist(X)
-	Y_is_hist = is_hist(Y)
+R2D2 = R6::R6Class( "R2D2" ,
 	
-	if( X_is_hist && Y_is_hist )
+	inherit = SBCK::CDFt,
+	
+	public = list(
+	
+	###############
+	## Arguments ##
+	###############
+	
+	irefs = NULL,
+	
+	
+	#################
+	## Constructor ##
+	#################
+	
+	initialize = function( irefs = base::c(1) , ... )
 	{
-		return( list( muX = X , muY = Y ) )
-	}
-	if( X_is_hist && !Y_is_hist )
+		kwargs = list(...)
+		base::do.call( super$initialize , kwargs )
+		self$irefs = irefs
+		private$ssr = SBCK::SchaakeShuffleRef$new( 1 )
+	},
+	
+	fit = function( Y0 , X0 , X1 )
 	{
-		muY = SBCK::SparseHist( Y , X$bin_width , X$bin_width )
-		return( list( muX = X , muY = muY ) )
-	}
-	if( !X_is_hist && Y_is_hist )
+		super$fit( Y0 , X0 , X1 )
+		private$ssr$fit(Y0)
+	},
+	
+	predict = function( X1 , X0 = NULL )
 	{
-		muX = SBCK::SparseHist( X , Y$bin_width , Y$bin_width )
-		return( list( muX = muX , muY = Y ) )
+		Z = super$predict(X1,X0)
+		if( is.null(X0) )
+		{
+			Z1 = base::array( NA , dim = base::c( base::dim(Z) , length(self$irefs) ) )
+			for( i in 1:length(self$irefs) )
+			{
+				private$ssr$ref = self$irefs[i]
+				Z1[,,i] = private$ssr$predict(Z)
+			}
+			if( length(self$irefs) == 1 )
+				return(Z1[,,1])
+			return(Z1)
+		}
+		
+		Z0 = base::array( NA , dim = base::c( base::dim(Z$Z0) , length(self$irefs) ) )
+		Z1 = base::array( NA , dim = base::c( base::dim(Z$Z1) , length(self$irefs) ) )
+		for( i in 1:length(self$irefs) )
+		{
+			private$ssr$ref = self$irefs[i]
+			Z0[,,i] = private$ssr$predict(Z$Z0)
+			Z1[,,i] = private$ssr$predict(Z$Z1)
+		}
+		if( length(self$irefs) == 1 )
+		{
+			Z0 = Z0[,,1]
+			Z1 = Z1[,,1]
+		}
+		
+		return( list( Z1 = Z1 , Z0 = Z0 ) )
 	}
 	
-	bw = SBCK::bin_width_estimator( list(X,Y) )
-	muX = SBCK::SparseHist( X , bw )
-	muY = SBCK::SparseHist( Y , bw )
+	),
 	
-	return( list( muX = muX , muY = muY ) )
-}
+	
+	######################
+	## Private elements ##
+	######################
+	
+	private = list(
+	
+	###############
+	## Arguments ##
+	###############
+	
+	ssr  = NULL
+	)
+)

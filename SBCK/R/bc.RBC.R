@@ -1,4 +1,3 @@
-
 ##################################################################################
 ##################################################################################
 ##                                                                              ##
@@ -82,57 +81,115 @@
 ##################################################################################
 ##################################################################################
 
-
-
-#' data_to_hist
+#' RBC (Random Bias Correction) method
 #'
-#' Just a function to transform two datasets into SparseHist, if X or Y (or the both) are already a SparseHist,
-#' update just the second
+#' Perform a multivariate bias correction of X with respect to Y randomly. Only for comparison.
 #'
-#' @param X [matrix or SparseHist]
-#' @param Y [matrix or SparseHist]
-#'        
-#' @return [list(muX,muY)] a list with the two SparseHist
+#' @docType class
+#' @importFrom R6 R6Class
 #'
+#' @param Y0  [matrix]
+#'        A matrix containing references during calibration period (time in column, variables in row)
+#' @param X0 [matrix]
+#'        A matrix containing biased data during calibration period (time in column, variables in row)
+#' @param X1 [matrix]
+#'        A matrix containing biased data during projection period (time in column, variables in row)
+#'
+#' @return Object of \code{\link{R6Class}} with methods for bias correction
+#' @format \code{\link{R6Class}} object.
+#'
+#' @section Methods:
+#' \describe{
+#'   \item{\code{new()}}{This method is used to create object of this class with \code{RBC}}
+#'   \item{\code{fit(Y0,X0,X1)}}{Fit the bias correction model from Y and X}.
+#'   \item{\code{predict(X1,X0)}}{Perform the bias correction of X with respect to Y.}.
+#' }
 #' @examples
-#' X = base::cbind( stats::rnorm(2000) , stats::rexp(2000)  )
-#' Y = base::cbind( stats::rexp(2000)  , stats::rnorm(2000) )
-#' 
-#' bw = base::c(0.1,0.1)
-#' muX = SBCK::SparseHist( X , bw )
-#' muY = SBCK::SparseHist( Y , bw )
-#' 
-#' ## The four give the same result
-#' SBCK::data_to_hist( X   , Y )
-#' SBCK::data_to_hist( muX , Y )
-#' SBCK::data_to_hist( X   , muY )
-#' SBCK::data_to_hist( muX , muY )
+#' ## Three bivariate random variables (rnorm and rexp are inverted between ref and bias)
+#' XY = SBCK::dataset_gaussian_exp_2d(2000)
+#' X0 = XY$X0 ## Biased in calibration period
+#' Y0 = XY$Y0 ## Reference in calibration period
+#' X1 = XY$X1 ## Biased in projection period
 #'
+#'
+#' ## Bias correction
+#' ## Step 1 : construction of the class RBC
+#' rbc = SBCK::RBC$new() 
+#' ## Step 2 : Fit the bias correction model
+#' rbc$fit( Y0 , X0 , X1 )
+#' ## Step 3 : perform the bias correction
+#' Z = rbc$predict(X1,X0) 
+#' ## Z$Z0 # BC of X0
+#' ## Z$Z1 # BC of X1
+#' @importFrom R6 R6Class
 #' @export
-data_to_hist = function( X , Y )
-{
-	is_hist = function(Z) { return( (class(Z) == "Rcpp_SparseHistBase" ) || ("OTHist" %in% class(Z))  ) }
-	X_is_hist = is_hist(X)
-	Y_is_hist = is_hist(Y)
+RBC = R6::R6Class( "RBC" ,
 	
-	if( X_is_hist && Y_is_hist )
+	
+	public = list(
+	
+	
+	###############
+	## Arguments ##
+	###############
+	
+	#################
+	## Constructor ##
+	#################
+	
+	initialize = function()
+	{},
+	
+	fit = function( Y0 , X0 , X1 = NULL )
 	{
-		return( list( muX = X , muY = Y ) )
-	}
-	if( X_is_hist && !Y_is_hist )
+		private$Y0 = if( class(Y0) == "numeric" ) matrix( Y0 , nrow = length(Y0) , ncol = 1 ) else Y0
+	},
+	
+	predict = function( X1 = NULL , X0 = NULL )
 	{
-		muY = SBCK::SparseHist( Y , X$bin_width , X$bin_width )
-		return( list( muX = X , muY = muY ) )
-	}
-	if( !X_is_hist && Y_is_hist )
-	{
-		muX = SBCK::SparseHist( X , Y$bin_width , Y$bin_width )
-		return( list( muX = muX , muY = Y ) )
+		Z0 = NULL
+		Z1 = NULL
+		if( !is.null(X0) )
+		{
+			if( class(X0) == "numeric" ) X0 = matrix( X0 , nrow = length(X0) , ncol = 1 )
+			idx = base::sample( 1:base::nrow(private$Y0) , base::nrow(X0) , replace = TRUE )
+			Z0 = private$Y0[idx,]
+		}
+		
+		if( !is.null(X1) )
+		{
+			if( class(X1) == "numeric" ) X1 = matrix( X1 , nrow = length(X0) , ncol = 1 )
+			idx = base::sample( 1:base::nrow(private$Y0) , base::nrow(X1) , replace = TRUE )
+			Z1 = private$Y0[idx,]
+		}
+		
+		if( !is.null(X0) && !is.null(X1) )
+		{
+			return( list( Z0 = Z0 , Z1 = Z1 ) )
+		}
+		else if( is.null(X0) )
+		{
+			return(Z1)
+		}
+		else
+		{
+			return(Z0)
+		}
 	}
 	
-	bw = SBCK::bin_width_estimator( list(X,Y) )
-	muX = SBCK::SparseHist( X , bw )
-	muY = SBCK::SparseHist( Y , bw )
+	),
 	
-	return( list( muX = muX , muY = muY ) )
-}
+	
+	######################
+	## Private elements ##
+	######################
+	
+	private = list(
+	
+	###############
+	## Arguments ##
+	###############
+	Y0 = NULL
+	
+	)
+)

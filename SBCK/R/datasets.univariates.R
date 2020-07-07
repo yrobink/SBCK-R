@@ -1,4 +1,3 @@
-
 ##################################################################################
 ##################################################################################
 ##                                                                              ##
@@ -82,57 +81,64 @@
 ##################################################################################
 ##################################################################################
 
-
-
-#' data_to_hist
+#' dataset_gaussian_exp_mixture_1d
 #'
-#' Just a function to transform two datasets into SparseHist, if X or Y (or the both) are already a SparseHist,
-#' update just the second
+#' Generate a univariate testing dataset from a mixture of gaussian and exponential distribution
 #'
-#' @param X [matrix or SparseHist]
-#' @param Y [matrix or SparseHist]
+#' @param n_samples [integer]
+#'        numbers of samples drawn
 #'        
-#' @return [list(muX,muY)] a list with the two SparseHist
+#' @return [list]
+#'        a list containing X0, X1 (biased in calibration/projection) and Y0 (reference in calibration)
 #'
 #' @examples
-#' X = base::cbind( stats::rnorm(2000) , stats::rexp(2000)  )
-#' Y = base::cbind( stats::rexp(2000)  , stats::rnorm(2000) )
-#' 
-#' bw = base::c(0.1,0.1)
-#' muX = SBCK::SparseHist( X , bw )
-#' muY = SBCK::SparseHist( Y , bw )
-#' 
-#' ## The four give the same result
-#' SBCK::data_to_hist( X   , Y )
-#' SBCK::data_to_hist( muX , Y )
-#' SBCK::data_to_hist( X   , muY )
-#' SBCK::data_to_hist( muX , muY )
+#' XY = SBCK::dataset_gaussian_exp_mixture_1d(2000)
+#' XY$X0 ## Biased in calibration period
+#' XY$Y0 ## Reference in calibration period
+#' XY$X1 ## Biased in projection period
 #'
 #' @export
-data_to_hist = function( X , Y )
+dataset_gaussian_exp_mixture_1d = function( n_samples )
 {
-	is_hist = function(Z) { return( (class(Z) == "Rcpp_SparseHistBase" ) || ("OTHist" %in% class(Z))  ) }
-	X_is_hist = is_hist(X)
-	Y_is_hist = is_hist(Y)
+	dsize = as.integer(0.75 * n_samples)
 	
-	if( X_is_hist && Y_is_hist )
-	{
-		return( list( muX = X , muY = Y ) )
-	}
-	if( X_is_hist && !Y_is_hist )
-	{
-		muY = SBCK::SparseHist( Y , X$bin_width , X$bin_width )
-		return( list( muX = X , muY = muY ) )
-	}
-	if( !X_is_hist && Y_is_hist )
-	{
-		muX = SBCK::SparseHist( X , Y$bin_width , Y$bin_width )
-		return( list( muX = muX , muY = Y ) )
-	}
+	X0 = matrix( NA , nrow = n_samples , ncol = 1 )
+	X0[,1] = stats::rnorm( n = n_samples , mean = 7 , sd = 1 )
 	
-	bw = SBCK::bin_width_estimator( list(X,Y) )
-	muX = SBCK::SparseHist( X , bw )
-	muY = SBCK::SparseHist( Y , bw )
+	X1 = matrix( NA , nrow = n_samples , ncol = 1 )
+	X1[1:(n_samples-dsize),1]         = stats::rnorm( n = n_samples - dsize , mean = 5 , sd = 1 )
+	X1[(n_samples-dsize):n_samples,1] = stats::rnorm( n = dsize + 1 , mean = 9 , sd = 1 )
 	
-	return( list( muX = muX , muY = muY ) )
+	Y0 = matrix( NA , nrow = n_samples , ncol = 1 )
+	Y0[1:dsize,1]         = stats::rexp( n = dsize , rate = 1 )
+	Y0[dsize:n_samples,1] = stats::rnorm( n = n_samples - dsize + 1 , mean = 10 , sd = 1 )
+	
+	return( list( Y0 = Y0 , X0 = X0 , X1 = X1 ) )
+}
+
+#' dataset_gaussian_VS_exp_1d
+#'
+#' Generate a univariate testing dataset such that biased data follow an exponential law whereas reference follow
+#' a normal distribution
+#'
+#' @param n_samples [integer]
+#'        numbers of samples drawn
+#'        
+#' @return [list]
+#'        a list containing X0, X1 (biased in calibration/projection) and Y0 (reference in calibration)
+#'
+#' @examples
+#' XY = SBCK::dataset_gaussian_VS_exp_1d(2000)
+#' XY$X0 ## Biased in calibration period
+#' XY$Y0 ## Reference in calibration period
+#' XY$X1 ## Biased in projection period
+#'
+#' @export
+dataset_gaussian_VS_exp_1d = function( n_samples )
+{
+	Y0 = matrix( stats::rnorm( n = n_samples , mean = 5 , sd = 1 ) , nrow = n_samples , ncol = 1 )
+	X0 = matrix( stats::rexp(  n = n_samples , rate = 1 ) , nrow = n_samples , ncol = 1 )
+	X1 = matrix( stats::rexp(  n = n_samples , rate = 2 ) , nrow = n_samples , ncol = 1 )
+	
+	return( list( Y0 = Y0 , X0 = X0 , X1 = X1 ) )
 }

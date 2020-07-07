@@ -1,4 +1,4 @@
-
+ 
 ##################################################################################
 ##################################################################################
 ##                                                                              ##
@@ -83,56 +83,99 @@
 ##################################################################################
 
 
-
-#' data_to_hist
+#' Slope stopping criteria
 #'
-#' Just a function to transform two datasets into SparseHist, if X or Y (or the both) are already a SparseHist,
-#' update just the second
+#' Class which send a stop signal when a time series stay constant, by testing the slope.
 #'
-#' @param X [matrix or SparseHist]
-#' @param Y [matrix or SparseHist]
-#'        
-#' @return [list(muX,muY)] a list with the two SparseHist
+#' @docType class
+#' @importFrom R6 R6Class
 #'
+#' @param minit [integer]
+#'        Minimal number of iterations. At least 3.
+#' @param maxit [integer]
+#'        Maximal number of iterations.
+#' @param tol [float]
+#'        Tolerance to control if slope is close to zero
+#' @param value [float]
+#'        New values of the time series
+#'
+#' @return Object of \code{\link{R6Class}} with methods for bias correction
+#' @format \code{\link{R6Class}} object.
+#'
+#' @section Methods:
+#' \describe{
+#'   \item{\code{new(minit,maxit,tol)}}{This method is used to create object of this class with \code{SlopeStoppingCriteria}}
+#'   \item{\code{reset()}}{Reset number of iterations to 0}.
+#'   \item{\code{append(value)}}{Add a new value to the time series.}.
+#' }
 #' @examples
-#' X = base::cbind( stats::rnorm(2000) , stats::rexp(2000)  )
-#' Y = base::cbind( stats::rexp(2000)  , stats::rnorm(2000) )
-#' 
-#' bw = base::c(0.1,0.1)
-#' muX = SBCK::SparseHist( X , bw )
-#' muY = SBCK::SparseHist( Y , bw )
-#' 
-#' ## The four give the same result
-#' SBCK::data_to_hist( X   , Y )
-#' SBCK::data_to_hist( muX , Y )
-#' SBCK::data_to_hist( X   , muY )
-#' SBCK::data_to_hist( muX , muY )
-#'
+#' stop_slope = SlopeStoppingCriteria$new( 20 , 500 , 1e-3 )
+#' x = 0
+#' while(!stop_slope$stop)
+#' {
+#' 	stop_slope$append(base::exp(-x))
+#' 	x = x + 0.1
+#' }
+#' print(stop_slope$nit)
 #' @export
-data_to_hist = function( X , Y )
-{
-	is_hist = function(Z) { return( (class(Z) == "Rcpp_SparseHistBase" ) || ("OTHist" %in% class(Z))  ) }
-	X_is_hist = is_hist(X)
-	Y_is_hist = is_hist(Y)
+SlopeStoppingCriteria = R6::R6Class( "SlopeStoppingCriteria" ,
 	
-	if( X_is_hist && Y_is_hist )
-	{
-		return( list( muX = X , muY = Y ) )
-	}
-	if( X_is_hist && !Y_is_hist )
-	{
-		muY = SBCK::SparseHist( Y , X$bin_width , X$bin_width )
-		return( list( muX = X , muY = muY ) )
-	}
-	if( !X_is_hist && Y_is_hist )
-	{
-		muX = SBCK::SparseHist( X , Y$bin_width , Y$bin_width )
-		return( list( muX = muX , muY = Y ) )
-	}
+	public = list(
 	
-	bw = SBCK::bin_width_estimator( list(X,Y) )
-	muX = SBCK::SparseHist( X , bw )
-	muY = SBCK::SparseHist( Y , bw )
+	################
+	## Parameters ##
+	################
 	
-	return( list( muX = muX , muY = muY ) )
-}
+	minit = NULL,
+	maxit = NULL,
+	nit   = NULL,
+	tol   = NULL,
+	stop  = NULL,
+	criteria = NULL,
+	slope = NULL,
+	
+	
+	#################
+	## Constructor ##
+	#################
+	
+	initialize = function( minit , maxit , tol )##{{{
+	{
+		self$minit = max(minit,3)
+		self$maxit = maxit
+		self$tol = tol
+		self$nit = 1
+		self$stop = FALSE
+		self$criteria = numeric(maxit)
+		self$slope = numeric(maxit)
+	},
+	##}}}
+	
+	reset = function()##{{{
+	{
+		self$nit = 1
+		self$stop = FALSE
+		self$criteria = numeric(self$maxit)
+		self$slope = numeric(self$maxit)
+	},
+	##}}}
+	
+	append = function(value)##{{{
+	{
+		self$criteria[self$nit] = value
+		if( self$nit >= 2 )
+		{
+			x = 1:self$nit
+			y = self$criteria[1:self$nit]
+			lm = stats::lm( y ~ x )
+			self$slope[self$nit-1] = as.vector(lm$coefficients[2])
+		}
+		self$stop = (self$nit >= self$minit) && (self$nit >= self$maxit - 1 || base::abs(self$slope[self$nit-1]) < self$tol)
+		self$nit = self$nit + 1
+	}
+	##}}}
+	
+	)
+)
+
+

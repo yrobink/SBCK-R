@@ -1,4 +1,4 @@
-
+ 
 ##################################################################################
 ##################################################################################
 ##                                                                              ##
@@ -83,56 +83,168 @@
 ##################################################################################
 
 
-
-#' data_to_hist
+#' QDM (Quantile delta mapping method)
 #'
-#' Just a function to transform two datasets into SparseHist, if X or Y (or the both) are already a SparseHist,
-#' update just the second
+#' Perform a bias correction.
 #'
-#' @param X [matrix or SparseHist]
-#' @param Y [matrix or SparseHist]
-#'        
-#' @return [list(muX,muY)] a list with the two SparseHist
+#' @docType class
+#' @importFrom R6 R6Class
 #'
+#' @param delta [character or list]
+#'        If character : "additive" or "multiplicative". If a list is given, delta[[1]] is the delta transform operator,
+#'        and delta[[2]] its inverse.
+#' @param ... 
+#'        Named arguments passed to quantile mapping
+#' @param Y0  [matrix]
+#'        A matrix containing references during calibration period (time in column, variables in row)
+#' @param X0 [matrix]
+#'        A matrix containing biased data during calibration period (time in column, variables in row)
+#' @param X1 [matrix]
+#'        A matrix containing biased data during projection period (time in column, variables in row)
+#'
+#' @return Object of \code{\link{R6Class}} with methods for bias correction
+#' @format \code{\link{R6Class}} object.
+#'
+#' @section Methods:
+#' \describe{
+#'   \item{\code{new(bin_width,bin_origin,cov_factor)}}{This method is used to create object of this class with \code{QDM}}
+#'   \item{\code{fit(Y0,X0,X1)}}{Fit the bias correction model from Y0, X0 and X1}.
+#'   \item{\code{predict(X1,X0)}}{Perform the bias correction.}
+#' }
+#' @references Cannon, A. J., Sobie, S. R., and Murdock, T. Q.: Bias correction of simulated precipitation by quantile mapping: how well do methods preserve relative changes in quantiles and extremes?, J. Climate, 28, 6938–6959, https://doi.org/10.1175/JCLI-D-14- 00754.1, 2015.
 #' @examples
-#' X = base::cbind( stats::rnorm(2000) , stats::rexp(2000)  )
-#' Y = base::cbind( stats::rexp(2000)  , stats::rnorm(2000) )
-#' 
-#' bw = base::c(0.1,0.1)
-#' muX = SBCK::SparseHist( X , bw )
-#' muY = SBCK::SparseHist( Y , bw )
-#' 
-#' ## The four give the same result
-#' SBCK::data_to_hist( X   , Y )
-#' SBCK::data_to_hist( muX , Y )
-#' SBCK::data_to_hist( X   , muY )
-#' SBCK::data_to_hist( muX , muY )
+#' ## Three bivariate random variables (rnorm and rexp are inverted between ref and bias)
+#' XY = SBCK::dataset_gaussian_exp_2d(2000)
+#' X0 = XY$X0 ## Biased in calibration period
+#' Y0 = XY$Y0 ## Reference in calibration period
+#' X1 = XY$X1 ## Biased in projection period
+#'
+#' ## Bias correction
+#' ## Step 1 : construction of the class QDM
+#' qdm = SBCK::QDM$new() 
+#' ## Step 2 : Fit the bias correction model
+#' qdm$fit( Y0 , X0 , X1 )
+#' ## Step 3 : perform the bias correction, Z is a list containing
+#' ## corrections
+#' Z = qdm$predict(X1,X0) 
+#' Z$Z0 ## Correction in calibration period
+#' Z$Z1 ## Correction in projection period
 #'
 #' @export
-data_to_hist = function( X , Y )
-{
-	is_hist = function(Z) { return( (class(Z) == "Rcpp_SparseHistBase" ) || ("OTHist" %in% class(Z))  ) }
-	X_is_hist = is_hist(X)
-	Y_is_hist = is_hist(Y)
+QDM = R6::R6Class( "QDM" ,
 	
-	if( X_is_hist && Y_is_hist )
-	{
-		return( list( muX = X , muY = Y ) )
-	}
-	if( X_is_hist && !Y_is_hist )
-	{
-		muY = SBCK::SparseHist( Y , X$bin_width , X$bin_width )
-		return( list( muX = X , muY = muY ) )
-	}
-	if( !X_is_hist && Y_is_hist )
-	{
-		muX = SBCK::SparseHist( X , Y$bin_width , Y$bin_width )
-		return( list( muX = muX , muY = Y ) )
-	}
+	public = list(
 	
-	bw = SBCK::bin_width_estimator( list(X,Y) )
-	muX = SBCK::SparseHist( X , bw )
-	muY = SBCK::SparseHist( Y , bw )
+	###############
+	## Arguments ##
+	###############
 	
-	return( list( muX = muX , muY = muY ) )
-}
+	#################
+	## Constructor ##
+	#################
+	
+	initialize = function( delta = "additive" , ... )##{{{
+	{
+		## Initialize delta method
+		if( class(delta) == "list" )
+		{
+			private$delta_method = delta[[1]]
+			private$idelta_method = delta[[2]]
+		}
+		else if( delta == "multiplicative" )
+		{
+			private$delta_method  = private$mult
+			private$idelta_method = private$div
+		}
+		else
+		{
+			private$delta_method  = private$add
+			private$idelta_method = private$sub
+		}
+		
+		private$qm_args = list(...)
+	},
+	##}}}
+	
+	fit = function( Y0 , X0 , X1 )##{{{
+	{
+		if( !is.matrix(Y0) ) Y0 = base::matrix( Y0 , ncol = 1 , nrow = length(Y0) )
+		if( !is.matrix(X0) ) X0 = base::matrix( X0 , ncol = 1 , nrow = length(X0) )
+		if( !is.matrix(X1) ) X1 = base::matrix( X1 , ncol = 1 , nrow = length(X1) )
+		
+		## Fit calibration part
+		private$qmX0Y0 = base::do.call( QM$new , private$qm_args )
+		private$qmX0Y0$fit( Y0 , X0 )
+		
+		## Fit delta
+		qmX1X0 = base::do.call( QM$new , private$qm_args )
+		qmX1X0$fit( X0 , X1 )
+		private$delta = private$idelta_method( X1 , qmX1X0$predict(X1) )
+		
+		## Fit projection part
+		private$qmX1Y0 = base::do.call( QM$new , private$qm_args )
+		private$qmX1Y0$fit( Y0 , X1 )
+	},
+	##}}}
+	
+	predict = function( X1 , X0 = NULL )##{{{
+	{
+		if( !is.null(X0) && !is.matrix(X0) ) X0 = base::matrix( X0 , ncol = 1 , nrow = length(X0) )
+		if( !is.matrix(X1) ) X1 = base::matrix( X1 , ncol = 1 , nrow = length(X1) )
+		
+		Z1 = private$delta_method( private$qmX1Y0$predict(X1) , private$delta )
+		if( !is.null(X0) )
+		{
+			Z0 = private$qmX0Y0$predict(X0)
+			return( list( Z1 = Z1 , Z0 = Z0 ) )
+		}
+		return(Z1)
+	}
+	##}}}
+	
+	),
+	
+	private = list(
+	
+	###############
+	## Arguments ##
+	###############
+	
+	delta_method  = NULL,
+	idelta_method = NULL,
+	delta = NULL,
+	qm_args = NULL,
+	qmX0Y0 = NULL,
+	qmX1Y0 = NULL,
+	
+	
+	#############
+	## Methods ##
+	#############
+	
+	add = function(x,y)##{{{
+	{ 
+		return( x + y )
+	},
+	##}}}
+	
+	mult = function(x,y)##{{{
+	{ 
+		return( x * y )
+	},
+	##}}}
+	
+	sub = function(x,y)##{{{
+	{ 
+		return( x - y )
+	},
+	##}}}
+	
+	div = function(x,y)##{{{
+	{ 
+		return( x / y )
+	}
+	##}}}
+	
+	)
+)

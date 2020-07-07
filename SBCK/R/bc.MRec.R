@@ -82,57 +82,222 @@
 ##################################################################################
 ##################################################################################
 
-
-
-#' data_to_hist
+#' MRec (Matrix Recorrelation) method
 #'
-#' Just a function to transform two datasets into SparseHist, if X or Y (or the both) are already a SparseHist,
-#' update just the second
+#' Perform a multivariate bias correction with Gaussian assumption. Only pearson correlations are corrected.
 #'
-#' @param X [matrix or SparseHist]
-#' @param Y [matrix or SparseHist]
-#'        
-#' @return [list(muX,muY)] a list with the two SparseHist
+#' @docType class
+#' @importFrom R6 R6Class
 #'
+#' @param distX [A list of ROOPSD_ distribution or NULL]
+#'        Describe the law of each margins. A list permit to use different laws for each margins. Default is empirical.
+#' @param distY [A list of ROOPSD_ distribution or NULL]
+#'        Describe the law of each margins. A list permit to use different laws for each margins. Default is empirical.
+#' @param Y0  [matrix]
+#'        A matrix containing references during calibration period (time in column, variables in row)
+#' @param X0 [matrix]
+#'        A matrix containing biased data during calibration period (time in column, variables in row)
+#' @param X1 [matrix]
+#'        A matrix containing biased data during projection period (time in column, variables in row)
+#'
+#' @return Object of \code{\link{R6Class}} with methods for bias correction
+#' @format \code{\link{R6Class}} object.
+#'
+#' @section Methods:
+#' \describe{
+#'   \item{\code{new(distY,distX)}}{This method is used to create object of this class with \code{MRec}}
+#'   \item{\code{fit(Y0,X0,X1)}}{Fit the bias correction model from Y0, X0 and X1}.
+#' }
+#' @references Bárdossy, A. and Pegram, G.: Multiscale spatial recorrelation of RCM precipitation to produce unbiased climate change scenarios over large areas and small, Water Resources Research, 48, 9502–, https://doi.org/10.1029/2011WR011524, 2012.
 #' @examples
-#' X = base::cbind( stats::rnorm(2000) , stats::rexp(2000)  )
-#' Y = base::cbind( stats::rexp(2000)  , stats::rnorm(2000) )
-#' 
-#' bw = base::c(0.1,0.1)
-#' muX = SBCK::SparseHist( X , bw )
-#' muY = SBCK::SparseHist( Y , bw )
-#' 
-#' ## The four give the same result
-#' SBCK::data_to_hist( X   , Y )
-#' SBCK::data_to_hist( muX , Y )
-#' SBCK::data_to_hist( X   , muY )
-#' SBCK::data_to_hist( muX , muY )
+#' ## Three bivariate random variables (rnorm and rexp are inverted between ref and bias)
+#' XY = SBCK::dataset_gaussian_exp_2d(2000)
+#' X0 = XY$X0 ## Biased in calibration period
+#' Y0 = XY$Y0 ## Reference in calibration period
+#' X1 = XY$X1 ## Biased in projection period
+#'
+#' ## Bias correction
+#' ## Step 1 : construction of the class MRec 
+#' mrec = SBCK::MRec$new() 
+#' ## Step 2 : Fit the bias correction model
+#' mrec$fit( Y0 , X0 , X1 )
+#' ## Step 3 : perform the bias correction, Z is a list containing corrections.
+#' Z = mrec$predict(X1,X0) ## X0 is optional, in this case Z0 is NULL
+#' Z$Z0 ## Correction in calibration period
+#' Z$Z1 ## Correction in projection period
 #'
 #' @export
-data_to_hist = function( X , Y )
-{
-	is_hist = function(Z) { return( (class(Z) == "Rcpp_SparseHistBase" ) || ("OTHist" %in% class(Z))  ) }
-	X_is_hist = is_hist(X)
-	Y_is_hist = is_hist(Y)
+MRec = R6::R6Class( "MRec" ,
 	
-	if( X_is_hist && Y_is_hist )
+	
+	public = list(
+	
+	
+	###############
+	## Arguments ##
+	###############
+	
+	n_features = NULL,
+	
+	
+	#################
+	## Constructor ##
+	#################
+	
+	initialize = function( distY = NULL , distX = NULL )
 	{
-		return( list( muX = X , muY = Y ) )
-	}
-	if( X_is_hist && !Y_is_hist )
+		private$distY = distY
+		private$distX = distX
+	},
+	
+	fit = function( Y0 , X0 , X1 )
 	{
-		muY = SBCK::SparseHist( Y , X$bin_width , X$bin_width )
-		return( list( muX = X , muY = muY ) )
-	}
-	if( !X_is_hist && Y_is_hist )
+		## Data in matrix
+		if( !is.matrix(Y0) ) Y0 = base::matrix( Y0 , ncol = 1 , nrow = length(Y0) )
+		if( !is.matrix(X0) ) X0 = base::matrix( X0 , ncol = 1 , nrow = length(X0) )
+		if( !is.matrix(X1) ) X1 = base::matrix( X1 , ncol = 1 , nrow = length(X1) )
+		self$n_features = base::ncol(Y0)
+		
+		## Kind of variable
+		if( is.null(private$distX) )
+		{
+			private$distX = list()
+			for( i in 1:self$n_features)
+				private$distX[[i]] = ROOPSD_rv_histogram
+		}
+		if( is.null(private$distY) )
+		{
+			private$distY = list()
+			for( i in 1:self$n_features)
+				private$distY[[i]] = ROOPSD_rv_histogram
+		}
+		
+		## Goto Gaussian world
+		private$qmX0 = QM$new( distX0 = private$distX , distY0 = ROOPSD_Normal$new( mean = 0 , sd = 1 ) )
+		private$qmX0$fit( X0 = X0 )
+		private$qmX1 = QM$new( distX0 = private$distX , distY0 = ROOPSD_Normal$new( mean = 0 , sd = 1 ) )
+		private$qmX1$fit( X0 = X1 )
+		private$qmY0 = QM$new( distX0 = private$distY , distY0 = ROOPSD_Normal$new( mean = 0 , sd = 1 ) )
+		private$qmY0$fit( X0 = Y0 )
+		Y0g = private$qmY0$predict(Y0)
+		X0g = private$qmX0$predict(X0)
+		X1g = private$qmX1$predict(X1)
+		
+		## Correlation
+		CY0g = stats::cor( Y0g , method = "pearson" )
+		CX0g = stats::cor( X0g , method = "pearson" )
+		
+		## Squareroot
+		svdY0g  = base::svd(CY0g)
+		private$S_CY0g  = svdY0g$u %*% base::diag(base::sqrt(svdY0g$d)) %*% base::t(svdY0g$u)
+		svdX0g  = base::svd(CX0g)
+		private$Si_CX0g = svdX0g$u %*% base::diag(1./base::sqrt(svdX0g$d)) %*% base::t(svdX0g$u)
+		private$re_un_mat = private$S_CY0g %*% private$Si_CX0g
+		
+		## Decor-recor-relation
+		X0_recor = base::t(private$re_un_mat %*% base::t(X0g))
+		X1_recor = base::t(private$re_un_mat %*% base::t(X1g))
+		
+		## Final QM
+		private$qmY0 = QM$new( distX0 = ROOPSD_Normal , distY0 = private$distY )
+		private$qmY0$fit( Y0 , X0_recor )
+	},
+	
+	predict = function( X1 , X0 = NULL )
 	{
-		muX = SBCK::SparseHist( X , Y$bin_width , Y$bin_width )
-		return( list( muX = muX , muY = Y ) )
+		X1g = private$qmX1$predict(X1)
+		X1_recor = base::t(private$re_un_mat %*% base::t(X1g))
+		Z1 = private$qmY0$predict(X1_recor)
+		
+		Z0 = NULL
+		if( !is.null(X0) )
+		{
+			X0g = private$qmX0$predict(X0)
+			X0_recor = base::t(private$re_un_mat %*% base::t(X0g))
+			Z0 = private$qmY0$predict(X0_recor)
+			return( list( Z1 = Z1 , Z0 = Z0 ) )
+		}
+		return(Z1)
 	}
 	
-	bw = SBCK::bin_width_estimator( list(X,Y) )
-	muX = SBCK::SparseHist( X , bw )
-	muY = SBCK::SparseHist( Y , bw )
+	),
 	
-	return( list( muX = muX , muY = muY ) )
-}
+	
+	######################
+	## Private elements ##
+	######################
+	
+	private = list(
+	
+	###############
+	## Arguments ##
+	###############
+	
+	distX = NULL,
+	distY = NULL,
+	S_CY0g  = NULL,
+	Si_CX0g = NULL,
+	re_un_mat = NULL,
+	qmX0 = NULL,
+	qmX1 = NULL,
+	qmY0 = NULL
+	
+	)
+)
+
+
+
+#MRec = function( X0 , X1 , Y0 , ratio = NULL )
+#{
+#	## Data in matrix
+#	if( !is.matrix(Y0) ) Y0 = base::matrix( Y0 , ncol = 1 , nrow = length(Y0) )
+#	if( !is.matrix(X0) ) X0 = base::matrix( X0 , ncol = 1 , nrow = length(X0) )
+#	if( !is.matrix(X1) ) X1 = base::matrix( X1 , ncol = 1 , nrow = length(X1) )
+#	n_features = base::ncol(Y0)
+#	
+#	## Kind of variable
+#	if( is.null(ratio) )
+#		ratio = base::rep( FALSE , n_features )
+#	
+#	distX = list()
+#	for( i in 1:n_features)
+#		distX[[i]] = if(!ratio[i]) ROOPSD_Empirical else ROOPSD_EmpiricalRatio
+#	
+#	
+#	## Goto Gaussian world
+#	qmX0 = QM$new( distX = distX , distY = ROOPSD_Normal$new( mean = 0 , sd = 1 ) )
+#	qmX0$fit( X0 = X0 )
+#	qmX1 = QM$new( distX = distX , distY = ROOPSD_Normal$new( mean = 0 , sd = 1 ) )
+#	qmX1$fit( X0 = X1 )
+#	qmY0 = QM$new( distX = distX , distY = ROOPSD_Normal$new( mean = 0 , sd = 1 ) )
+#	qmY0$fit( X0 = Y0 )
+#	Y0g = qmY0$predict(Y0)
+#	X0g = qmX0$predict(X0)
+#	X1g = qmX1$predict(X1)
+#	
+#	## Correlation
+#	CY0g = stats::cor( Y0g , method = "pearson" )
+#	CX0g = stats::cor( X0g , method = "pearson" )
+#	
+#	## Squareroot
+#	svdY0g  = base::svd(CY0g)
+#	S_CY0g  = svdY0g$u %*% base::diag(base::sqrt(svdY0g$d)) %*% base::t(svdY0g$u)
+#	svdX0g  = base::svd(CX0g)
+#	Si_CX0g = svdX0g$u %*% base::diag(1./base::sqrt(svdX0g$d)) %*% base::t(svdX0g$u)
+#	
+#	## Decor-recor-relation
+#	X0_recor = base::t(S_CY0g %*% Si_CX0g %*% base::t(X0g))
+#	X1_recor = base::t(S_CY0g %*% Si_CX0g %*% base::t(X1g))
+#	
+#	## Final QM
+#	qmX0Y0 = QM$new( distX = ROOPSD_Normal , distY = distX )
+#	qmX0Y0$fit( Y0 , X0_recor )
+#	
+#	Z0 = qmX0Y0$predict(X0_recor)
+#	Z1 = qmX0Y0$predict(X1_recor)
+#	
+#	return( list( Z0 = Z0 , Z1 = Z1 ) )
+#}
+#
+
+

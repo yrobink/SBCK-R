@@ -82,57 +82,120 @@
 ##################################################################################
 ##################################################################################
 
-
-
-#' data_to_hist
+#' dTSBC (dynamical Time Shifted Bias Correction)
 #'
-#' Just a function to transform two datasets into SparseHist, if X or Y (or the both) are already a SparseHist,
-#' update just the second
+#' Perform a bias correction of auto-correlation
 #'
-#' @param X [matrix or SparseHist]
-#' @param Y [matrix or SparseHist]
-#'        
-#' @return [list(muX,muY)] a list with the two SparseHist
+#' @docType class
+#' @importFrom R6 R6Class
 #'
+#' @param lag [integer]
+#'        max lag of autocorrelation
+#' @param bc_method [SBCK::BC_METHOD]
+#'        bias correction method to use after shift of data, default is OTC
+#' @param method [character]
+#'        If inverse is by row or column, see class Shift
+#' @param ref [integer]
+#'        reference column/row to inverse shift, see class Shift. Default is 0.5 * (lag+1)
+#' @param ...
+#'        All others arguments are passed to bc_method
+#' @param Y0  [matrix]
+#'        A matrix containing references during calibration period (features in columns, samples in rows)
+#' @param X0 [matrix]
+#'        A matrix containing biased data during calibration period (features in columns, samples in rows)
+#' @param X1 [matrix]
+#'        A matrix containing biased data during projection period (features in columns, samples in rows)
+#'
+#' @return Object of \code{\link{R6Class}} with methods for bias correction
+#' @format \code{\link{R6Class}} object.
+#'
+#' @section Methods:
+#' \describe{
+#'   \item{\code{new(lag,bc_method,method,ref,...)}}{This method is used to create object of this class with \code{dTSBC}}
+#'   \item{\code{fit(Y0,X0,X1)}}{Fit the bias correction model X0 and X1 with respect to Y0}.
+#'   \item{\code{predict(X1)}}{Perform the bias correction of X1 with respect to parameters given in fit.}.
+#' }
 #' @examples
-#' X = base::cbind( stats::rnorm(2000) , stats::rexp(2000)  )
-#' Y = base::cbind( stats::rexp(2000)  , stats::rnorm(2000) )
 #' 
-#' bw = base::c(0.1,0.1)
-#' muX = SBCK::SparseHist( X , bw )
-#' muY = SBCK::SparseHist( Y , bw )
+#' ## Generate two AR processes
+#' X0 = as.vector( stats::arima.sim( n = 2000 , model = list( ar = base::c(  0.6 , 0.2 , -0.1 ) ) , rand.gen = function(n) { return(stats::rnorm( n , mean = 0.2 , sd = 1   )) } )     )
+#' X1 = as.vector( stats::arima.sim( n = 2000 , model = list( ar = base::c(  0.4 , 0.1 , -0.3 ) ) , rand.gen = function(n) { return(stats::rnorm( n , mean = 0.8 , sd = 1   )) } )     )
+#' Y0 = as.vector( stats::arima.sim( n = 2000 , model = list( ar = base::c( -0.3 , 0.4 , -0.2 ) ) , rand.gen = function(n) { return(stats::rnorm( n , mean = 0   , sd = 0.7 )) } ) + 5 )
 #' 
-#' ## The four give the same result
-#' SBCK::data_to_hist( X   , Y )
-#' SBCK::data_to_hist( muX , Y )
-#' SBCK::data_to_hist( X   , muY )
-#' SBCK::data_to_hist( muX , muY )
+#' ## And correct it with 30 lags
+#' dtsbc = SBCK::dTSBC$new( 30 )
+#' dtsbc$fit( Y0 , X0 , X1 )
+#' Z = dtsbc$predict(X1,X0)
 #'
 #' @export
-data_to_hist = function( X , Y )
-{
-	is_hist = function(Z) { return( (class(Z) == "Rcpp_SparseHistBase" ) || ("OTHist" %in% class(Z))  ) }
-	X_is_hist = is_hist(X)
-	Y_is_hist = is_hist(Y)
+dTSBC = R6::R6Class( "dTSBC" ,
 	
-	if( X_is_hist && Y_is_hist )
+	
+	active = list(
+	
+	method = function(value)
 	{
-		return( list( muX = X , muY = Y ) )
-	}
-	if( X_is_hist && !Y_is_hist )
+		if(missing(value))
+			return(self$shift$method)
+		else
+			self$shift$method = value
+	},
+	
+	ref = function(value)
 	{
-		muY = SBCK::SparseHist( Y , X$bin_width , X$bin_width )
-		return( list( muX = X , muY = muY ) )
-	}
-	if( !X_is_hist && Y_is_hist )
-	{
-		muX = SBCK::SparseHist( X , Y$bin_width , Y$bin_width )
-		return( list( muX = muX , muY = Y ) )
+		if(missing(value))
+			return(self$shift$ref)
+		else
+			self$shift$ref = value
 	}
 	
-	bw = SBCK::bin_width_estimator( list(X,Y) )
-	muX = SBCK::SparseHist( X , bw )
-	muY = SBCK::SparseHist( Y , bw )
+	),
 	
-	return( list( muX = muX , muY = muY ) )
-}
+	public = list(
+	
+	###############
+	## Arguments ##
+	###############
+	
+	shift     = NULL,
+	bc_method = NULL,
+	
+	
+	#################
+	## Constructor ##
+	#################
+	
+	initialize = function( lag , bc_method = SBCK::dOTC , method = "row" , ref = "middle" , ... )
+	{
+		bc_method_args = list(...)
+		self$bc_method = base::do.call( bc_method$new , bc_method_args )
+		if( ref == "middle" )
+			ref = as.integer(0.5 * (lag+1) )
+		self$shift = SBCK::Shift$new( lag , method , ref )
+	},
+	
+	fit = function( Y0 , X0 , X1 )
+	{
+		X0s = self$shift$transform(X0)
+		X1s = self$shift$transform(X1)
+		Y0s = self$shift$transform(Y0)
+		self$bc_method$fit( Y0s , X0s , X1s )
+	},
+	
+	predict = function( X1 , X0 = NULL )
+	{
+		shX0 = NULL
+		if( !is.null(X0) )
+			shX0 = self$shift$transform(X0)
+		Z = self$bc_method$predict( self$shift$transform(X1) , shX0 )
+		
+		if( is.null(X0) )
+		{
+			return(self$shift$inverse(Z))
+		}
+		return( list( Z1 = self$shift$inverse(Z$Z1) , Z0 = self$shift$inverse(Z$Z0) ) )
+	}
+	
+	
+	)
+)

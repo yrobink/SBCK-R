@@ -1,5 +1,3 @@
-#!/bin/sh
-
 ##################################################################################
 ##################################################################################
 ##                                                                              ##
@@ -84,10 +82,102 @@
 ##################################################################################
 
 
-rm -f SBCK/NAMESPACE
-rm -f SBCK/man/*.Rd
-rm -f SBCK/R/RcppExports.R
-rm -f SBCK/src/*.so
-rm -f SBCK/src/*.o
-rm -f SBCK/src/RcppExports.cpp
+###############
+## Libraries ##
+###############
+
+###############
+## Functions ##
+###############
+
+
+## CDFt Correction method
+
+#' Dist Helper
+#'
+#' Class used by CDFt and QM to facilitate fit, do not use
+#'
+#' @docType class
+#' @importFrom R6 R6Class
+#'
+#' @param dist [NULL, ROOPSD or list of ROOPSD]
+#'        Describe distribution of margins
+#' @param kwargs [list]
+#'        list of arguments of ROOPSD distribution
+#' @param n_features [integer]
+#'        Numbers of features
+#' @param X [vector]
+#'        Fit margins with X
+#' @param i [integer]
+#'        Index of margins
+#'
+#' @return Object of \code{\link{R6Class}} with methods for bias correction
+#' @format \code{\link{R6Class}} object.
+#'
+#' @section Methods:
+#' \describe{
+#'   \item{\code{new(dist,kwargs)}}{This method is used to create object of this class with \code{DistHelper}}
+#'   \item{\code{fit(X,i)}}{Fit the distribution}.
+#'   \item{\code{set_features(n_features)}}{Set numbers of features}.
+#'   \item{\code{is_frozen(i)}}{Test if law is frozen}.
+#'   \item{\code{is_parametric(i)}}{Test if law is parametric}.
+#' }
+#' @examples
+#' ## 
+#' @export
+DistHelper = R6::R6Class( "DistHelper" ,
+	
+	public = list(
+	
+	dist = NULL,
+	law  = NULL,
+	kwargs = NULL,
+	
+	
+	initialize = function( dist , kwargs )
+	{
+		self$dist   = if( is.null(dist) ) ROOPSD_rv_histogram else dist
+		self$kwargs = if( is.null(kwargs) ) list() else kwargs
+		self$law    = list()
+	},
+	
+	set_features = function( n_features )
+	{
+		if( !is.list(self$dist) )
+		{
+			dist = list()
+			for( i in 1:n_features )
+				dist[[i]] = self$dist
+			self$dist = dist
+		}
+	},
+	
+	fit = function( X , i )
+	{
+		if( "R6" %in% class(self$dist[[i]]) )
+		{
+			self$law[[i]] = self$dist[[i]]
+		}
+		else
+		{
+			self$law[[i]] = base::do.call( self$dist[[i]]$new , self$kwargs )
+			self$law[[i]]$fit(X)
+		}
+	},
+	
+	is_frozen = function(i)
+	{
+		return( "R6" %in% class(self$dist[[i]]) )
+	},
+	
+	is_parametric = function(i)
+	{
+		return( self$law[[i]]$is_parametric() )
+	}
+	
+	)
+)
+
+
+
 

@@ -82,57 +82,101 @@
 ##################################################################################
 ##################################################################################
 
-
-
-#' data_to_hist
+#' ECBC (Empirical Copula Bias Correction) method
 #'
-#' Just a function to transform two datasets into SparseHist, if X or Y (or the both) are already a SparseHist,
-#' update just the second
+#' Perform a multivariate (non stationary) bias correction.
 #'
-#' @param X [matrix or SparseHist]
-#' @param Y [matrix or SparseHist]
-#'        
-#' @return [list(muX,muY)] a list with the two SparseHist
+#' @docType class
+#' @importFrom R6 R6Class
 #'
+#' @param ... 
+#'        Named arguments passed to CDFt
+#' @param Y0  [matrix]
+#'        A matrix containing references during calibration period (time in column, variables in row)
+#' @param X0 [matrix]
+#'        A matrix containing biased data during calibration period (time in column, variables in row)
+#' @param X1 [matrix]
+#'        A matrix containing biased data during projection period (time in column, variables in row)
+#'
+#' @return Object of \code{\link{R6Class}} with methods for bias correction
+#' @format \code{\link{R6Class}} object.
+#'
+#' @section Methods:
+#' \describe{
+#'   \item{\code{new(...)}}{This method is used to create object of this class with \code{ECBC}}
+#'   \item{\code{fit(Y0,X0,X1)}}{Fit the bias correction model from Y0, X0 and X1}.
+#'   \item{\code{predict(X1)}}{Perform the bias correction of X1 with respect to paramater given in fit.}.
+#' }
+#' @references Vrac, M. and P. Friederichs, 2015: Multivariate—Intervariable, Spatial, and Temporal—Bias Correction. J. Climate, 28, 218–237, https://doi.org/10.1175/JCLI-D-14-00059.1
 #' @examples
-#' X = base::cbind( stats::rnorm(2000) , stats::rexp(2000)  )
-#' Y = base::cbind( stats::rexp(2000)  , stats::rnorm(2000) )
-#' 
-#' bw = base::c(0.1,0.1)
-#' muX = SBCK::SparseHist( X , bw )
-#' muY = SBCK::SparseHist( Y , bw )
-#' 
-#' ## The four give the same result
-#' SBCK::data_to_hist( X   , Y )
-#' SBCK::data_to_hist( muX , Y )
-#' SBCK::data_to_hist( X   , muY )
-#' SBCK::data_to_hist( muX , muY )
+#' ## Three bivariate random variables (rnorm and rexp are inverted between ref and bias)
+#' XY = SBCK::dataset_gaussian_exp_2d(2000)
+#' X0 = XY$X0 ## Biased in calibration period
+#' Y0 = XY$Y0 ## Reference in calibration period
+#' X1 = XY$X1 ## Biased in projection period
+#'
+#'
+#' ## Bias correction
+#' ## Step 1 : construction of the class ECBC
+#' ecbc = SBCK::ECBC$new() 
+#' ## Step 2 : Fit the bias correction model
+#' ecbc$fit( Y0 , X0 , X1 )
+#' ## Step 3 : perform the bias correction
+#' Z = ecbc$predict(X1,X0) 
 #'
 #' @export
-data_to_hist = function( X , Y )
-{
-	is_hist = function(Z) { return( (class(Z) == "Rcpp_SparseHistBase" ) || ("OTHist" %in% class(Z))  ) }
-	X_is_hist = is_hist(X)
-	Y_is_hist = is_hist(Y)
+ECBC = R6::R6Class( "ECBC" ,
 	
-	if( X_is_hist && Y_is_hist )
+	inherit = SBCK::CDFt,
+	
+	public = list(
+	
+	###############
+	## Arguments ##
+	###############
+	
+	#################
+	## Constructor ##
+	#################
+	
+	initialize = function(...)
 	{
-		return( list( muX = X , muY = Y ) )
-	}
-	if( X_is_hist && !Y_is_hist )
+		kwargs = list(...)
+		base::do.call( super$initialize , kwargs )
+		private$ss = SBCK::SchaakeShuffle$new()
+	},
+	
+	fit = function( Y0 , X0 , X1 )
 	{
-		muY = SBCK::SparseHist( Y , X$bin_width , X$bin_width )
-		return( list( muX = X , muY = muY ) )
-	}
-	if( !X_is_hist && Y_is_hist )
+		super$fit( Y0 , X0 , X1 )
+		private$ss$fit(Y0)
+	},
+	
+	predict = function( X1 , X0 = NULL )
 	{
-		muX = SBCK::SparseHist( X , Y$bin_width , Y$bin_width )
-		return( list( muX = muX , muY = Y ) )
+		Z = super$predict(X1,X0)
+		if( is.null(X0) )
+			return(private$ss$predict(Z))
+		
+		Z0 = private$ss$predict(Z$Z0)
+		Z1 = private$ss$predict(Z$Z1)
+		
+		return( list( Z1 = Z1 , Z0 = Z0 ) )
 	}
 	
-	bw = SBCK::bin_width_estimator( list(X,Y) )
-	muX = SBCK::SparseHist( X , bw )
-	muY = SBCK::SparseHist( Y , bw )
+	),
 	
-	return( list( muX = muX , muY = muY ) )
-}
+	
+	######################
+	## Private elements ##
+	######################
+	
+	private = list(
+	
+	###############
+	## Arguments ##
+	###############
+	
+	ss  = NULL
+	)
+)
