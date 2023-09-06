@@ -164,3 +164,95 @@ PPPDiffRef = R6::R6Class( "PPPDiffRef" ,
 )
 ##}}}
 
+## PPPPreserveOrder ##{{{
+
+#' PPPPreserveOrder
+#'
+#' @description
+#' Set an order between cols, and preserve it by swapping values after
+#' the correction
+#'
+#' @details
+#' Set an order between cols, and preserve it by swapping values after
+#' the correction
+#'
+#' @examples
+#' ## Build data
+#' X = matrix( stats::rnorm( n = 20 ) , ncol = 2 )
+#' 
+#' ## PPP
+#' ppp   = SBCK::PPPPreserveOrder$new( cols = base::c(1,2) )
+#' Xt    = ppp$transform(X) ## Nothing
+#' Xti   = ppp$itransform(Xt) ## Order
+#' 
+#' @export
+PPPPreserveOrder = R6::R6Class( "PPPPreserveOrder" ,
+	
+	inherit = PrePostProcessing,
+	
+	## Public list {{{
+	
+	public = list(
+	
+	## initialize ##{{{
+	#' @description
+    #' Create a new PPPPreserveOrder object.
+    #' @param cols The columns to keep the order
+	#' @param ... Others arguments are passed to PrePostProcessing
+    #' @return A new `PPPPreserveOrder` object.
+	initialize = function( cols = NULL , ... )
+	{
+		kwargs = list(...)
+		base::do.call( super$initialize , kwargs )
+		private$.cols = cols
+	},
+	##}}}
+	
+	## transform  ##{{{
+	#' @description
+    #' nothing occur here
+    #' @param X Data to transform
+    #' @return Xt a transformed matrix
+	transform = function( X )
+	{
+		return(X)
+	},
+	##}}}
+	
+	## itransform  ##{{{
+	#' @description
+    #' sort along cols
+    #' @param Xt Data to transform
+    #' @return X a transformed matrix
+	itransform = function( Xt )
+	{
+		X = matrix( Xt , nrow = nrow(Xt) , ncol = ncol(Xt) )
+		X[,private$.cols] = base::t( apply( X , 1 , base::sort ) )[,private$.cols]
+		
+		return(X)
+	}
+	##}}}
+	
+	),
+	##}}}
+	
+	## Private list ##{{{
+	
+	private = list(
+	
+	## Private arguments ##{{{
+	.cols = NULL
+	##}}}
+	
+	## Private methods ##{{{
+	
+	
+	##}}}
+	
+	)
+	##}}}
+	
+)
+##}}}
+
+
