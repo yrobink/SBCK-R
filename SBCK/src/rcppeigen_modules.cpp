@@ -22,7 +22,6 @@
 
 // [[Rcpp::depends(RcppEigen)]]
 #include "SparseHist.h"
-#include "NetworkSimplex.h"
 #include "Pairwise_distances.h"
 
 
