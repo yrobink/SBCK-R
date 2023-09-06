@@ -226,14 +226,15 @@ PPPLogLinLink = R6::R6Class( "PPPLogLinLink" ,
 	## initialize ##{{{
 	#' @description
     #' Create a new PPPLogLinLink object.
+    #' @param s The value where the function jump from exp to linear
     #' @param cols Columns to apply the link function
 	#' @param ... Others arguments are passed to PrePostProcessing
     #' @return A new `PPPLogLinLink` object.
-	initialize = function( cols = NULL , ... )
+	initialize = function( s = 1e-5 , cols = NULL , ... )
 	{
 		kwargs = list(...)
-		kwargs[["transform_"]]  = function(x) { return( where( (0 < x) & (x < 1) , base::log(x) , x - 1 ) ) }
-		kwargs[["itransform_"]] = function(x) { return( where( x < 0 , base::exp(x) , x + 1 ) ) }
+		kwargs[["transform_"]]  = function(x) { return( where( (0 < x) & (x < s) , s * base::log( where( x > 0 , x , NaN ) / s ) + s , x ) ) }
+		kwargs[["itransform_"]] = function(x) { return( where( x < s , s * base::exp( (x-s) / s ) , x ) ) }
 		kwargs[["cols"]]        = cols
 		base::do.call( super$initialize , kwargs )
 	}
