@@ -1,5 +1,5 @@
 
-## Copyright(c) 2021 Yoann Robin
+## Copyright(c) 2021 / 2023 Yoann Robin
 ## 
 ## This file is part of SBCK.
 ## 
@@ -179,7 +179,7 @@ CDFt = R6::R6Class( "CDFt" ,
 		
 		## Set normalizations
 		##===================
-		if( class(private$normalize_cdf) == "logical" )
+		if( is(private$normalize_cdf,"logical") )
 			private$normalize_cdf = numeric(self$n_features) + private$normalize_cdf
 		
 		## Start fit itself

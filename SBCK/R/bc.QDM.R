@@ -1,5 +1,5 @@
 
-## Copyright(c) 2021 Yoann Robin
+## Copyright(c) 2021 / 2023 Yoann Robin
 ## 
 ## This file is part of SBCK.
 ## 
@@ -74,7 +74,7 @@ QDM = R6::R6Class( "QDM" ,
 	initialize = function( delta = "additive" , ... )
 	{
 		## Initialize delta method
-		if( class(delta) == "list" )
+		if( is(delta,"list") )
 		{
 			private$delta_method = delta[[1]]
 			private$idelta_method = delta[[2]]
