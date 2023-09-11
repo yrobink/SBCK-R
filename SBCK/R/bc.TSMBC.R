@@ -43,8 +43,8 @@
 #' rand.genY0 = function(n){ return(stats::rnorm( n , mean = 0   , sd = 0.7 )) }
 #'
 #' ## Generate two AR processes
-#' X0 = stats::arima.sim( n = 2000 , model = modelX0 , rand.gen = rand.genX0 )
-#' Y0 = stats::arima.sim( n = 2000 , model = modelY0 , rand.gen = rand.genY0 )
+#' X0 = stats::arima.sim( n = 1000 , model = modelX0 , rand.gen = rand.genX0 )
+#' Y0 = stats::arima.sim( n = 1000 , model = modelY0 , rand.gen = rand.genY0 )
 #' X0 = as.vector( X0 )
 #' Y0 = as.vector( Y0 + 5 )
 #' 
